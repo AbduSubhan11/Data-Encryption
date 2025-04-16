@@ -1,9 +1,6 @@
 import streamlit as st
 import hashlib
-from cryptography.fernet import Fernet
-
-KEY = Fernet.generate_key()
-cipher = Fernet(KEY)
+import base64
 
 if "stored_data" not in st.session_state:
     st.session_state.stored_data = {} 
@@ -17,34 +14,35 @@ if "authenticated" not in st.session_state:
 def hash_passkey(passkey: str) -> str:
     return hashlib.sha256(passkey.encode()).hexdigest()
 
-
-def encrypt_data(text: str) -> str:
-    return cipher.encrypt(text.encode()).decode()
+def encrypt_data(text: str, passkey: str) -> str:
+    key = hash_passkey(passkey)[:32]  # Use a derived key (first 32 chars)
+    combined = f"{text}|{key}"
+    encoded = base64.urlsafe_b64encode(combined.encode()).decode()
+    return encoded
 
 def decrypt_data(encrypted_text: str, passkey: str) -> str or None:
-    hashed_passkey = hash_passkey(passkey)
-    stored = st.session_state.stored_data.get(encrypted_text)
-
-    if stored and stored["passkey"] == hashed_passkey:
-        st.session_state.failed_attempts = 0 
-        return cipher.decrypt(encrypted_text.encode()).decode()
-    else:
+    try:
+        decoded = base64.urlsafe_b64decode(encrypted_text.encode()).decode()
+        original_text, key = decoded.rsplit('|', 1)
+        if key == hash_passkey(passkey)[:32]:
+            st.session_state.failed_attempts = 0
+            return original_text
+        else:
+            st.session_state.failed_attempts += 1
+            return None
+    except Exception:
         st.session_state.failed_attempts += 1
         return None
 
+st.title("Secure Data Encryption System (Base64 Version)")
 
-st.title("Secure Data Encryption System")
-
-# Navigation
 menu = ["Home", "Store Data", "Retrieve Data", "Login"]
 choice = st.sidebar.selectbox("Navigate", menu)
 
-# Home Page
 if choice == "Home":
     st.header("🏠 Welcome")
-    st.markdown("Use this tool to **store and retrieve encrypted data** securely using a unique passkey.")
+    st.markdown("Use this tool to **store and retrieve encoded data** securely using a passkey.")
 
-# Store Data Page
 elif choice == "Store Data":
     st.header("Store Data Securely")
     user_data = st.text_area("Enter your data:")
@@ -52,18 +50,16 @@ elif choice == "Store Data":
 
     if st.button("Encrypt & Store"):
         if user_data and passkey:
-            hashed = hash_passkey(passkey)
-            encrypted = encrypt_data(user_data)
+            encrypted = encrypt_data(user_data, passkey)
             st.session_state.stored_data[encrypted] = {
                 "encrypted_text": encrypted,
-                "passkey": hashed
+                "passkey": hash_passkey(passkey)
             }
             st.success("Your data has been securely stored!")
             st.code(encrypted, language="text")
         else:
             st.warning("Please fill in both the data and passkey fields.")
 
-# Retrieve Data Page
 elif choice == "Retrieve Data":
     if not st.session_state.authenticated:
         st.warning("Reauthentication required due to too many failed attempts.")
@@ -90,7 +86,6 @@ elif choice == "Retrieve Data":
             else:
                 st.warning("Please fill in all fields.")
 
-# Login Page
 elif choice == "Login":
     st.header("Reauthorization Required")
     login_pass = st.text_input("Enter Master Password (demo: admin123):", type="password")
